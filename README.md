@@ -6,7 +6,7 @@ Repository
 The repository includes the following files:
   
   * "Readme.md" - current file, describing repository and assignmment task
-  * samples_codebook.part1..3.rar contains 3 files:
+  * "samples_codebook.part1..3.rar" contains 3 files:
     * "development_sample.xlsb" - development sample. use to build model.
     * "assessment_sample.xlsb" - final assessment sample.  
     * "Codebook.xlsb" -  partial description for "development_sample.xlsb" and "assessment_sample.xlsb"
