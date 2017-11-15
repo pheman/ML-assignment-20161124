@@ -269,3 +269,81 @@ pipe = Pipeline([('derivesFeature',derivs),
                  #('logisticR', lr),
                  
                 ])
+
+# confusion Matrix and ROC plot
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score,roc_curve, auc
+def plot_roc(ytrue,ytest, title=''):
+    fpr = dict()
+    tpr = dict()
+    roc_auc = dict()
+    fpr,tpr,_ = roc_curve(ytrue, ytest)
+    roc_auc = auc(fpr, tpr)
+
+    plt.figure()
+    lw = 2
+    plt.plot(fpr, tpr, color='darkorange',
+            lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver operating characteristic for '+ title)
+    plt.legend(loc="lower right")
+def evaluate_model(model, X,y, title=None ):    
+    res = model.predict(X)
+    cm = confusion_matrix( y, res)
+    print(cm)
+    resprob = model.predict_proba(X)[:,1]
+    plot_roc(y, resprob, title=title)
+    plt.show()
+def truncData(dfinp, colreg):
+    df = dfinp.copy()
+    for col in df.columns:
+        if colreg in col:
+            df = df.drop(col,axis=1)
+    return df
+
+dftrain = truncData(dfeature, 'none') # 'numerical','woe'
+dftest  = truncData(dfeature_test, 'none')
+kf = KFold(n_splits=2)
+for train_index, test_index in kf.split(dftrain):
+    X_train, X_test = dftrain.iloc[train_index,:].copy(), dftrain.iloc[test_index,:].copy()
+    y_train, y_test = df.TARGET.iloc[train_index].copy(),  df.TARGET.iloc[test_index].copy()
+    pipe.fit(X_train, y_train)
+    evaluate_model(pipe,  X_train, y_train, title='Train' )
+    evaluate_model(pipe,  X_test, y_test, title='Test' )
+    
+pipe.fit(dftrain, df.TARGET)
+dfeature['Proba'] = pipe.predict_proba(dftrain)[:,1]
+dfeature_test['Proba'] = pipe.predict_proba(dftest)[:,1]
+dfeature.to_csv('development_with_Probability.csv')
+dfeature_test.to_csv('assessment_with_Probability.csv')
+
+#Grid Search for the optimized hyper parameters
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import roc_auc_score,roc_curve, auc
+
+param_space = {
+               'clf__n_estimators'       : [160, 320, 640],
+               'clf__max_depth'          : [3, 6, 7],
+               'clf__min_child_weight'   :  [100,300,1000],
+               'clf__subsample'          : [ 0.5, 0.9],
+               'clf__colsample_bytree'   : [0.1, 0.3, 0.5],
+
+               #'clf__max_delta_step'    : [0.1, 0.3, 0.5,0.7,0.9],
+               #'clf__gamma'             : [0.1, 0.3, 1 , 5, 10],
+               #'clf__reg_lambda'        : [1.0, 5.0, 10.0],
+               #'clf__reg_alpha'         :  [0.0, 5.0, 10.0],
+               #'clf__scale_pos_weight'  : [1.0, 0.1, 0.5],   
+              }
+search = GridSearchCV(pipe, param_space, scoring='roc_auc', cv=5, n_jobs=-1, verbose=2)
+search.fit(dftrain, df.TARGET)
+search.best_estimator_.named_steps
+
+
+    
+    
+    
