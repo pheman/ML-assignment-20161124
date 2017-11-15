@@ -109,3 +109,163 @@ for idx in dfcorr.index:
         if dfcorr.loc[idx,col] > 0.9 and idx!=col:
             colinearList.append( [set([idx,col]) , dfcorr.loc[idx,col]] )
 (colinearList)
+
+# feature engineering as a transformer to avoid touching the TARGET information while calculate woe
+from sklearn.base import BaseEstimator
+import time
+from datetime import datetime
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.preprocessing import OneHotEncoder,MinMaxScaler,StandardScaler,QuantileTransformer
+from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier,ExtraTreesClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+from sklearn.feature_selection import SelectPercentile, f_classif,SelectFromModel
+
+from sklearn.pipeline import Pipeline
+from xgboost import XGBClassifier
+from sklearn.model_selection import KFold
+import category_encoders as ce
+from tempfile import mkdtemp
+
+
+def lap_div(x,y):
+    #laplace division in case 0/0
+    return (x+1)/(y+1)
+class derivesFeatureGenerator(BaseEstimator):
+    #calculate woe
+    def __init__(self):
+        self.woeDict = {}
+    def fit(self, X, y):
+        for col in X.select_dtypes(include=['object']).columns:
+            xtab = pd.crosstab(X[col],y)
+            xtab['woe'] = np.log(  lap_div( xtab[1],xtab[1].sum()) /  lap_div(xtab[0],xtab[0].sum()) )
+            self.woeDict[col] = xtab['woe'].to_dict()
+        return self
+    def transform(self, X, y=None):
+        for col in X.select_dtypes(include=['object']).columns:
+            mapper = self.woeDict[col]
+            nafill = np.median(list(mapper.values()))
+            X[col+'_woe'] = X[col].map( lambda x: mapper.setdefault(x, nafill) )
+        return X
+class clusterTransformer(BaseEstimator):
+    #try to use the leaf id from xgboost or randomForest as  inputs of final estimator, make a chain of xgboost/RF + LR/SVM
+    def __init__(self,estimator):
+        self.clf = estimator
+    def fit(self, X, y):
+        self.clf.fit(X,y)
+        return self
+    def transform(self, X, y=None):
+        Xleaf = self.clf.apply(X) 
+        return Xleaf
+class ensembleModel(BaseEstimator):
+    # use a emsemble Model as the final estimator
+    def __init__(self,estimators=[]):
+        self.clfs = estimators
+    def fit(self, X, y):
+        for clf in self.clfs:
+            print('training', type(clf),datetime.now().strftime('%H:%M:%S'))
+            clf.fit(X,y)
+        return self
+    def predict(self, X, y=None):
+        ypre = pd.DataFrame()
+        mid = 0
+        for clf in self.clfs:
+            print('predicting', type(clf),datetime.now().strftime('%H:%M:%S'))
+            ypre[mid] = clf.predict(X)
+            mid += 1
+        return ypre
+    def predict_proba(self, X, y=None):
+        yproba = pd.DataFrame()
+        mid = 0
+        for clf in self.clfs:
+            print('predicting_proba', type(clf),datetime.now().strftime('%H:%M:%S'))
+            yproba[mid] = clf.predict_proba(X)[:,1]
+            mid += 1
+        return yproba
+    def transform(self, X, y=None):
+        yproba = pd.DataFrame()
+        mid = 0
+        for clf in self.clfs:
+            yproba[mid] = clf.predict_proba(X)[:,1]
+            mid += 1
+        return yproba
+class ensembleWithStrategy(BaseEstimator):
+    # use max or min to vote
+    def __init__(self,estimators=[],operator=None):
+        self.clfs = estimators
+        self.opt = operator
+    def fit(self, X, y):
+        for clf in self.clfs:
+            print('training', type(clf),datetime.now().strftime('%H:%M:%S'))
+            clf.fit(X,y)
+        return self
+    def predict(self, X, y=None):
+        ypre = pd.DataFrame()
+        mid = 0
+        for clf in self.clfs:
+            print('predicting', type(clf),datetime.now().strftime('%H:%M:%S'))
+            ypre[mid] = clf.predict(X)
+            mid += 1
+        return ypre.apply(self.opt, axis=1)
+    def predict_proba(self, X, y=None):
+        yproba = pd.DataFrame()
+        mid = 0
+        for clf in self.clfs:
+            print('predicting_proba', type(clf),datetime.now().strftime('%H:%M:%S'))
+            yproba[mid] = clf.predict_proba(X)[:,1]
+            mid += 1
+        return yproba.apply(self.opt, axis=1)
+
+cachedir = mkdtemp()
+
+
+derivs = derivesFeatureGenerator()
+ohc = ce.OneHotEncoder(handle_unknown='ignore')
+mms = MinMaxScaler()
+sts = StandardScaler()
+qts = QuantileTransformer()
+
+sfv = SelectPercentile(f_classif, percentile=90)
+sfm = SelectFromModel(ExtraTreesClassifier(n_estimators=960, max_depth=10, class_weight='balanced',
+                      max_features=0.3, min_samples_split=1000, min_samples_leaf=500, random_state=0, n_jobs=-1)
+                     )
+pca = PCA(n_components=0.7)
+xgc = XGBClassifier(n_estimators=320*2,  nthread=16, min_child_weight=200 ,max_depth=3,
+                    subsample=0.9, colsample_bytree=0.9, scale_pos_weight=1.0 )
+lr = LogisticRegression( C=100.0, class_weight='balanced', max_iter=1000, penalty='l2')
+knc = KNeighborsClassifier( n_neighbors=3, n_jobs=-1)
+gnc = GaussianNB()
+svc = SVC( C=1, probability=True,class_weight='balanced')
+mlp = MLPClassifier(alpha=1)
+
+emm = ensembleModel(estimators=[xgc,lr,mlp])
+ews = ensembleWithStrategy(estimators=[xgc,lr,mlp],operator=max)
+lrem = LogisticRegression(  class_weight='balanced', max_iter=1000, penalty='l2')
+
+cluster = clusterTransformer(xgc)
+enc = OneHotEncoder()
+
+rfc = RandomForestClassifier(n_estimators=9600, max_depth=10, class_weight='balanced',
+                             criterion='entropy',max_features=0.9,min_samples_split=50,
+                             min_samples_leaf=20,random_state=0, n_jobs=-1)
+pipe = Pipeline([('derivesFeature',derivs),
+                 ('oneHotEncoding', ohc),
+                 ('numericalScales', qts),
+                 ('featureSelection1',sfv), 
+                 #('featureSelection2',sfm),
+                 #('featureDecompositon',pca),
+                 ('clf',xgc),
+                 
+                 #('enemble',emm),
+                 #('lrem',lrem),
+                 
+                 #try the combination of xgboost+LR
+                 #('cluster',cluster),
+                 #('one hot encoder',enc),
+                 #('logisticR', lr),
+                 
+                ])
