@@ -46,3 +46,66 @@ for col in dfeature.columns[0:]:
 plt.hist(dfeature.COMPFIELD.dropna())
 plt.title('COMPFIELD')
 plt.show()
+
+# try to convert some ordinal catetorical variables to numerical
+def str2float(x):
+    #try:
+#       try:
+#           if np.isnan(x):
+#               return x
+#       except TypeError:
+#               pass
+        if isinstance(x,float) or isinstance(x,int):
+            return x
+        if 'low-' in x:
+            return (float(x.split('low-')[1]) - 1) * 0.5
+        if '>=' in x:
+            return (float(x.split('>=')[1]) + 1) * 1.5
+        if '<=' in x:
+            return (float(x.split('<=')[1]) - 1) * 0.5
+        if '>' in x:
+            return (float(x.split('>')[1]) + 1) * 1.5
+        if '<' in x:
+            return (float(x.split('<')[1]) - 1) * 0.5
+        if '-' in x:
+            if x.split('-')[1] == '':
+                return np.nan
+            else:
+                return ( float(x.split('-')[0]) + float(x.split('-')[1]) )* 0.5
+        if 'N\\A' in x:
+                return np.nan
+        return float(x)
+    #except ValueError:
+    #    print(x)
+dfnew = pd.DataFrame()
+for col in dfeature.select_dtypes(include=['object']).columns:
+    #print(col)
+    try:
+        dfeature.loc[:, col+'numerical'] = dfeature[col].apply(str2float)
+        dfeature_test.loc[:, col+'numerical'] = dfeature_test[col].apply(str2float)
+        #dfeature.loc[:, col] = dfeature[col].apply(str2float)
+        #dfeature_test.loc[:, col] = dfeature_test[col].apply(str2float)
+    except ValueError:
+        print('Error',col)
+dfeature.head()
+
+#fill nan values, different strategies for different data types: median for float, mode for integer, 'Missing' for categorical
+def fill_nan(df):
+    fillFloatColumns = df.select_dtypes(include=['float']).median()
+    fillIntColumns = df.select_dtypes(include=['int']).mode().iloc[0]
+    fillCatColumns = pd.Series( 'Missing', index=df.select_dtypes(include=['object']).columns)
+    fillValue = fillFloatColumns.append(fillIntColumns).append(fillCatColumns)
+    #fillValue
+    df = df.fillna(value=fillValue)
+    return df
+
+dfeature      = fill_nan(dfeature)
+dfeature_test = fill_nan(dfeature_test)
+
+dfcorr = dfeature.corr()
+colinearList = []
+for idx in dfcorr.index:
+    for col in dfcorr.columns:
+        if dfcorr.loc[idx,col] > 0.9 and idx!=col:
+            colinearList.append( [set([idx,col]) , dfcorr.loc[idx,col]] )
+(colinearList)
