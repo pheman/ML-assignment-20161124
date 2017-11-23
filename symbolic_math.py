@@ -17,78 +17,42 @@ pd.set_option( 'mode.chained_assignment', 'raise')
 zhfont = FontProperties()
 zhfont.set_family('SimHei')
 
-def sumHub(dbcbudget, signratio, key, term):
-    saleSum = 0.0
-    for dbc in signratio.index:
-        try:
-            #print(dbc)
-            saleSum = saleSum + dbcbudget.loc[dbc].loc[term,key] * signratio[dbc]
-            #print(saleSum)
-        except KeyError:
-            print(dbc,'not in dbcbudget from sumHub')        
-    return saleSum
+
 
 pd.set_option('mode.chained_assignment','raise')
 zhfont = FontProperties()
 zhfont.set_family('SimHei')
 
-def check_index(df1, df2):
-    df1set = set(df1.index)
-    df2set = set(df2.index)
-    print('length =', len(df1), ' and ',len(df2))
-    print('only in left ', df1set - df2set)
-    print('only in right', df2set - df1set)
-    
-def core_code(round, year, cbgRatio, wlbgRatio):
+def core_code(round, year, gbcrat, wlbgrat):
 
       
-        tranmatrix.loc['ROS','CBG'] = sm.Symbol('ros_cbg_'+dbc)
-        lockCBGRos = list(solveset( Eq(tranmatrix.loc['EBIT','CBG'], tranmatrix.loc['净销售收入','CBG'] - tranmatrix.loc['销售成本','CBG'] - tranmatrix.loc['期间费用','CBG'] ), tranmatrix.loc['ROS','CBG']))[0]
-
-    dfWLDelta  = (dfReport['WL_ROS']   - dbcinfo.loc[dbcList,'泛网络分销的ROS-median'])**2 * dfReport['泛网络收入']**2 *dfReport['CIT Rate']**2
-    dfCBGDelta = (dfReport['CBG_ROS']  - dbcinfo.loc[dbcList,'CBG分销的ROS-median'])**2 * dfReport['终端收入'] **2 *dfReport['CIT Rate']**2
-    dfHubDelta = (dfReportHub['ROS'] - [0.025,0.01,0.01,0.02,0.02])**2 * dfReportHub['收入']
-
-    dfDelta = dfWLDelta.append(dfCBGDelta) #.append(dfHubDelta)
+    b = sm.Symbol('a')
+    d = list(solveset( Eq(a, b ), c))[0]
+    
     dfDeltaSum = dfDelta.sum()
 
-    deltaTaxFun = lambdify([list(dfROS) ], deltaTax.sum(), modules='numpy')
+    deltaTaxFun = lambdify([list(dfSOR) ], deltaTax.sum(), modules='numpy')
 
-    jacopt = [sm.diff(dfDeltaSum,x) for x in dfROS]
-    jacopt = [lambdify([list(dfROS) ], y, modules='numpy') for y in jacopt]
+    jacopt = [sm.diff(func,x) for x in dfr_o_s]
+    jacopt = [lambdify([list(dfr_o_s) ], y, modules='numpy') for y in jacopt]
     def jacfun(x):
         return np.array([f(x) for f in jacopt])
-
-    ## 用集团经营净利润## 用集团经营净利润## 用集团经营净利润## 用集团经营净利润## 用集团经营净利润## 用集团经营净利润
-    cbgwlbgRatio = dbcbudget.swaplevel().loc['贡献利润']['消费者'].sum() / (dbcbudget.swaplevel().loc['贡献利润']['消费者'].sum() + dbcbudget.swaplevel().loc['贡献利润']['泛网络'].sum())
-    consCoreWL  = lambdify([list(dfROS) ], ratioCoreWL  - wlbgRatio)
-    consCoreCBG = lambdify([list(dfROS) ], ratioCoreCBG - cbgRatio)
    
-    cons = [consCoreWL, consCoreCBG]
-    jaccon = [[sm.diff(ratioCoreWL,x) for x in dfROS],[sm.diff(ratioCoreCBG,x) for x in dfROS]]
-    jaccon = [[lambdify([list(dfROS) ],y, modules='numpy') for y in x] for x in jaccon  ]
+    cons = [a, b]
+    jaccon = [[sm.diff(ratCoreWL,x) for x in dfSOR],[sm.diff(ratCoregbc,x) for x in dfSOR]]
+    jaccon = [[lambdify([list(dfSOR) ],y, modules='numpy') for y in x] for x in jaccon  ]
     def jacconfun(x):
         return np.array( [ [fx(x) for fx in fc] for fc in jaccon] )
 
     eqcons = []
-    for idx in dfROS.index[:-5]:
+    for idx in dfSOR.index[:-5]:
         dbc = idx.split('_')[0]  #idx[:-4] 
-        if dbcinfo.loc[dbc,'代表处对应子公司类型'] == '服务型子公司':
-            eqcons.append(lambdify([list(dfROS) ], dfROS[idx] - dbcinfo.loc[dbc,'泛网络分销的ROS-median']))
+        
+        eqcons.append(lambdify([list(dfSOR) ], dfSOR[idx] - dbcinfo.loc[dbc,'median']))
             
-    lower = dbcinfo.loc[dbcList,'泛网络分销的ROS-Lower End'].append(
-            dbcinfo.loc[dbcList,'CBG分销的ROS-Lower End']).append(
-            dfReportHub['ROS']*0.0    + [0.024,0.009,0.009,0.019,0.019])
-
-    upper = dbcinfo.loc[dbcList,'泛网络分销的ROS-Upper End'].append(
-            dbcinfo.loc[dbcList,'CBG分销的ROS-Upper End']).append(
-            dfReportHub['ROS']*0.0    + [0.026,0.011,0.011,0.021,0.021])
-    initialBounds = pd.concat([lower, upper], axis=1)
-    initialBounds.columns = ['lower', 'upper']
-    initialBounds.index = dfROS.index
-
+    
     x0 = (lower/2 + upper/2)
-    optiFunc = lambdify([list(dfROS) ], dfDeltaSum, modules='numpy')
+    optiFunc = lambdify([list(dfSOR) ], dfDeltaSum, modules='numpy')
 
     bounds = list(zip( list(lower),list(upper)))
     
@@ -98,45 +62,42 @@ def core_code(round, year, cbgRatio, wlbgRatio):
         res,funcvalue, iters, imode, smode = fmin_slsqp(optiFunc, x0=x0, ieqcons=cons, eqcons=eqcons, bounds=bounds,fprime=jacfun, fprime_ieqcons=jacconfun, iter=1000,iprint=2,full_output=True)
     
    
-    dfReportFunc = dfReport.apply(lambda x: x.apply(lambda y:lambdify([list(dfROS) ], y)))
+    dfReportFunc = dfReport.apply(lambda x: x.apply(lambda y:lambdify([list(dfSOR) ], y)))
     dfReportNum  = dfReportFunc.apply(lambda x: x.apply(lambda y:y(dfRes)))
-    initial_col = list(dfReportNum.columns)
-    dfReportNum['代表处类型'] = [dbcinfo.loc[dbc,'代表处对应子公司类型'] for dbc in dfReportNum.index]
-    new_col = ['代表处类型'] + initial_col
-    dfReportNum = dfReportNum.loc[:,new_col] 
+    
 
     for dbc in dfReport.index:
-        dbcallmatrix[dbc] = dbcallmatrix[dbc].apply(lambda x: x.apply(lambda y:lambdify([list(dfROS) ], y)))
+        dbcallmatrix[dbc] = dbcallmatrix[dbc].apply(lambda x: x.apply(lambda y:lambdify([list(dfSOR) ], y)))
         dbcallmatrix[dbc] = dbcallmatrix[dbc].apply(lambda x: x.apply(lambda y:y(dfRes)))
         
     for dbc in dfReportHub.index:
-        dbcallmatrix[dbc] = dbcallmatrix[dbc].apply(lambda y:lambdify([list(dfROS) ], y))
+        dbcallmatrix[dbc] = dbcallmatrix[dbc].apply(lambda y:lambdify([list(dfSOR) ], y))
         dbcallmatrix[dbc] = dbcallmatrix[dbc].apply(lambda y:y(dfRes))
     
 
-    dfReportHubFunc = dfReportHub.apply(lambda x: x.apply(lambda y:lambdify([list(dfROS) ], y)))
+    dfReportHubFunc = dfReportHub.apply(lambda x: x.apply(lambda y:lambdify([list(dfSOR) ], y)))
     dfReportHubNum  = dfReportHubFunc.apply(lambda x: x.apply(lambda y:y(dfRes)))
     #%%
     
-    return smode, gReport, consCoreCBG(dfRes)+cbgRatio, consCoreWL(dfRes)+ wlbgRatio, touchDict, riskTax
+    return smode, gReport, consCoregbc(dfRes)+gbcrat, consCoreWL(dfRes)+ wlbgrat, touchDict, riskTax
 #%%
 class WorkThread(QtCore.QThread):  
     trigger = QtCore.pyqtSignal(str, pd.DataFrame, float, float, dict, float)
     round = 1
-    cbgRatio = 0.0
-    wlbgRatio = 0.0
+    gbcrat = 0.0
+    wlbgrat = 0.0
     def __int__(self):  
         super(WorkThread,self).__init__()  
   
     def run(self):     
-        smode,gdfres, cbgRatioRes, wlbgRatioRes, touchDict, riskTax = core_code(self.round, '2017', self.cbgRatio, self.wlbgRatio)
+        smode,gdfres, gbcratRes, wlbgratRes, touchDict, riskTax = core_code(self.round, '2017', self.gbcrat, self.wlbgrat)
         print(self.round)
-        self.trigger.emit(smode, gdfres, cbgRatioRes, wlbgRatioRes, touchDict, riskTax)         #完毕后发出信号
+        self.trigger.emit(smode, gdfres, gbcratRes, wlbgratRes, touchDict, riskTax)         #完毕后发出信号
         
 class taxPlan(QtWidgets.QMainWindow, Ui_MainWindow): 
     _signal = QtCore.pyqtSignal()
-    cbgRatio = 0.0
-    wlbgRatio = 0.0
+    gbcrat = 0.0
+    wlbgrat = 0.0
     def __init__(self):
         QtWidgets.QMainWindow.__init__(self)
         Ui_MainWindow.__init__(self)
@@ -150,10 +111,10 @@ class taxPlan(QtWidgets.QMainWindow, Ui_MainWindow):
         self.resultWindow.setText('Round1 Start' + '\n')
         self.thread  = WorkThread()
         self.thread.round = 1
-        self.thread.cbgRatio  = float( self.cbg_domes_ratio.toPlainText() )
-        self.thread.wlbgRatio = float( self.wlbg_domes_ratio.toPlainText())
-        print(self.cbg_domes_ratio.toPlainText())
-        print(self.wlbg_domes_ratio.toPlainText())
+        self.thread.gbcrat  = float( self.gbc_domes_rat.toPlainText() )
+        self.thread.wlbgrat = float( self.wlbg_domes_rat.toPlainText())
+        print(self.gbc_domes_rat.toPlainText())
+        print(self.wlbg_domes_rat.toPlainText())
         
         self.thread.trigger.connect(self.finished)
         self.thread.start()
@@ -161,14 +122,14 @@ class taxPlan(QtWidgets.QMainWindow, Ui_MainWindow):
         self.resultWindow.setText('Round2 Start' + '\n')
         self.thread  = WorkThread()
         self.thread.round = 2
-        self.thread.cbgRatio  = float( self.cbg_domes_ratio.toPlainText() )
-        self.thread.wlbgRatio = float( self.wlbg_domes_ratio.toPlainText())
-        print(self.cbg_domes_ratio.toPlainText())
-        print(self.wlbg_domes_ratio.toPlainText())
+        self.thread.gbcrat  = float( self.gbc_domes_rat.toPlainText() )
+        self.thread.wlbgrat = float( self.wlbg_domes_rat.toPlainText())
+        print(self.gbc_domes_rat.toPlainText())
+        print(self.wlbg_domes_rat.toPlainText())
         
         self.thread.trigger.connect(self.finished)
         self.thread.start()
-    def finished(self, smode, gdfres, cbgRatioRes, wlbgRatioRes, touchDict, riskTax):
+    def finished(self, smode, gdfres, gbcratRes, wlbgratRes, touchDict, riskTax):
         print(smode)
         print(gdfres)
         print(type(gdfres))
@@ -181,7 +142,7 @@ class taxPlan(QtWidgets.QMainWindow, Ui_MainWindow):
            
         else:
            self.resultWindow.append(smode)
-           self.resultWindow.append('国内利润占比， CBG:%s, 泛网络:%s\n'%(format(cbgRatioRes,'.2%'),format(wlbgRatioRes,'.2%')) )
+           
            for key, item in touchDict.items():
                self.resultWindow.append(key + ' '*(20 - len(key)) +item)
            self.resultWindow.append('Total Tax Risk is'+ format(float(format(riskTax,'.2f')),',') )
