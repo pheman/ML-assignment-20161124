@@ -49,3 +49,4 @@ def get_dummies_groupby_mp(df, factor_dict, n_jobs):
 amountByEmployee      = df[['a','b','c']].drop_duplicates().groupby('a').agg(
                                 {'b':[np.mean,np.sum], 'c':len})
                                 
+redis_conn.set(name,vpickle)
