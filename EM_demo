@@ -1,0 +1,49 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov 30 17:02:35 2017
+
+@author: zhangruibin
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt 
+
+
+
+N = 1000
+sigma = 5
+X1 = np.random.normal(loc=170, scale=sigma, size=N)
+X2 = np.random.normal(loc=160, scale=sigma, size=N)
+X = np.concatenate([X1,X2])
+#plt.hist(X1)
+
+def gaussion(x, mu, sigma):
+    
+    p = 1.0/np.sqrt(2*np.pi*sigma**2)*np.exp(-(x-mu)**2/(2*sigma**2))
+    return p
+
+mu0,mu1 = 170,160
+
+
+def getOmega(x,mu0,mu1):
+    
+    omega0 = gaussion(x,mu0,sigma=sigma)
+    omega1 = gaussion(x,mu1,sigma=sigma)
+    omega  = np.vstack([omega0,omega1])
+    for col in range(len(x)):
+        omega[:,col] = omega[:,col] / omega[:,col].sum()
+    return omega
+
+for _ in range(1000):
+    #E step
+    omega = getOmega(X,mu0,mu1)
+
+    # M step
+    mu0 = (omega[0,:]*X).sum() / omega[0,:].sum()
+    mu1 = (omega[1,:]*X).sum() / omega[1,:].sum()
+
+print(mu0,mu1)
+
+
+
+
