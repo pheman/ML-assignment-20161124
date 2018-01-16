@@ -1,0 +1,308 @@
+#!/bin/sh
+source ~/.bashrc
+
+date_id=$(date +%Y%m%d)
+user_label_save_path="/home/hdp-reader/proj/hdp-reader-up/personal/zhangruibin/user_label/user_label_nobucket_"${date_id}
+
+handle_date=`date -d -2day '+%Y%m%d'`
+hadoop fs -test -e hdfs://namenodefd1v.qss.zzzc.qihoo.net:9000/home/nlp/personal/liweili/handlelog_${handle_date}/_SUCCESS
+if [ $? -eq 0 ]; then
+    echo handle_log exist, continue
+else
+    echo no new  handle_log, exit
+    exit
+fi
+
+day=1
+while true
+do
+    hb_date=`date -d -${day}day '+%Y%m%d'`
+    hadoop fs -test -e /home/hdp-reader-up/personal/xuhongbin/news/profile/other_channel_profile_conduct_profile/profile_push_online.${hb_date}/_SUCCESS
+    if [ $? -eq 0 ]; then
+        echo hb_date=${hb_date}
+        break
+    else
+        echo ${hb_date} does not exist
+        ((day=day+1))
+    fi
+done
+
+day=1
+while true
+do
+    wl_date=`date -d -${day}day '+%Y%m%d'`
+    hadoop fs -test -e /home/hdp-reader/proj/hdp-reader-up/personal/wenliang/profile/wl_profile/profile_push_online_merge.${hb_date}/_SUCCESS
+    if [ $? -eq 0 ]; then
+        echo wl_date=${wl_date}
+        break
+    else
+        ((day=day+1))
+    fi
+done
+
+
+sparksubmit  new_user_label.py  \
+              --dateid=${date_id} \
+              --hb_date=${hb_date} \
+              --wl_date=${wl_date} \
+              --save_path=${user_label_save_path}
+
+INPUT_PAT=${user_label_save_path}
+HDFS_PAT="/home/hdp-reader/proj/hdp-reader-up/personal/zhangruibin/user_label/user_label_"${date_id}
+
+hadoop fs -rmr ${HDFS_PAT}
+echo $INPUT_PAT
+function get_user_bucket(){
+        /usr/bin/hadoop/software/hadoop/bin/hadoop jar /usr/bin/hadoop/software/hadoop-0.20.2.1U29/contrib/streaming/hadoop-streaming.jar \
+                -input $INPUT_PAT \
+                -output $HDFS_PAT \
+                -mapper "python26 get_user_bucket.py"\
+                -reducer "cat"\
+                -file "./get_user_bucket.py" \
+                -file "./libcrc64.so"\
+                -file "./libcrypto.so.10"\
+                -file "./libssl.so.10"\
+                -jobconf mapred.job.name=zhangruibin_get_user_bucket \
+                -jobconf mapred.map.tasks=1000 \
+                -jobconf mapred.job.priority=VERY_HIGH \
+                -jobconf mapred.reduce.tasks=0 \
+                -jobconf mapred.output.compress=true \
+                -jobconf mapred.output.compression.codec=org.apache.hadoop.io.compress.GzipCodec 
+
+        hadoop fs -test -e $HDFS_PAT/_SUCCESS
+        if [ $? -ne 0 ]; then
+                exit 255 
+        fi  
+}
+#get_user_bucket
+
+
+from random import random
+from operator import add
+import subprocess, sys, os, time 
+import json,re
+from pyspark import SparkContext, SparkConf
+from pyspark.sql import SQLContext, Row,HiveContext
+from pyspark.sql import types as T
+from pyspark.sql import functions as F
+from pyspark import StorageLevel
+from optparse import OptionParser
+import datetime
+import time
+
+def parse_profile(line):                                                                                 
+#    try:                                                                                                
+        lsp = line.split('\t')                                                                           
+        uid_bucket = lsp[0].split('_')                                                                   
+        uid = uid_bucket[0]                                                                              
+        bucket = uid_bucket[-1]                                                                          
+#        profile = lsp[2]                                                                                
+        return (uid,bucket)                                                                              
+#    except:                                                                                             
+#        return ('','','')
+
+def parse_wid(line):
+    lsp = line.split('\t')
+    if len(lsp) == 6:
+        uid, sign, date, click_num, pv_num = lsp[0], lsp[1], lsp[2], int(lsp[3]), int(lsp[4])
+        return (uid,sign, date,click_num, pv_num)
+    return ('error', 'error','error',0,0)
+
+def filter_bucket(x):
+    try:    sign = re.search('("sign": "360_79aabe15"){1}?', x).group()
+    except: return False
+    try:    bucket = re.search('("bucket": "106"){1}?', x).group()
+    except: return False
+    
+    return True
+
+def grade(x):
+    if x==0: return '0'
+    if x==1: return '1'
+    if x>=2 and x<5: return '2'
+    if x>=5 and x<20: return '3'
+    return '4'
+
+def main(dateid,hb_date,wl_date, save_path):
+    ifall = ''
+    uwl_path  = '/home/hdp-reader/proj/hdp-reader-up/personal/wenliang/profile/wl_profile/profile_push_online_merge.{0}/part-{1}*'.format( wl_date, ifall)
+    uhb_path  = '/home/hdp-reader-up/personal/xuhongbin/news/profile/other_channel_profile_conduct_profile/profile_push_online.{0}/part-{1}*'.format(hb_date,ifall)
+
+    wl_profile = sc.textFile(uwl_path).map(parse_profile).toDF(['uid','bucket_wl']).dropDuplicates()#.filter('bucket_wl=106').dropDuplicates()
+    hb_profile = sc.textFile(uhb_path).map(parse_profile).toDF(['uid','bucket_hb']).dropDuplicates()#.filter('bucket_hb=106').dropDuplicates()
+
+    wl_profile_length = wl_profile.count()
+    print 'wl_profile length', wl_profile_length
+    hb_profile_length = hb_profile.count()
+    print 'hb_profile length', hb_profile_length
+
+    join_profile = wl_profile.join(hb_profile, 'uid' , 'outer')
+    join_profile_length = join_profile.count()
+    print 'join_profile length', join_profile_length
+
+    new_user_profile = join_profile.filter(F.isnull('bucket_hb'))
+    new_user_profile = new_user_profile.select('uid',new_user_profile.bucket_wl.alias('bucket')).dropDuplicates().withColumn('NewOld', F.lit('new'))
+
+    old_user_profile = join_profile.filter(~F.isnull('bucket_hb'))
+    old_user_profile = old_user_profile.select('uid',old_user_profile.bucket_hb.alias('bucket')).dropDuplicates().withColumn('NewOld', F.lit('old'))
+
+    all_user_profile = wl_profile.select('uid',wl_profile.bucket_wl.alias('bucket')).unionAll(hb_profile.select('uid',hb_profile.bucket_hb.alias('bucket'))).dropDuplicates()
+
+    user_new_old_label = new_user_profile.unionAll(old_user_profile)
+
+    newNum, oldNum, allNum, user_new_old_labelNum = new_user_profile.count(), old_user_profile.count(), all_user_profile.count(),user_new_old_label.count()
+    print 'new old and alluser and user_new_old_label  number', newNum, oldNum, allNum, user_new_old_labelNum
+
+    today = datetime.datetime.strptime(dateid,'%Y%m%d')
+    for pday in range(2,9):
+        past_date = today - datetime.timedelta(days=pday)
+        past_date = past_date.strftime('%Y%m%d')
+        wid_path  = 'hdfs://namenodefd1v.qss.zzzc.qihoo.net:9000/home/nlp/personal/liweili/handlelog_{0}/wid-r-{1}*'.format(past_date,ifall)
+        wid_log   = sc.textFile(wid_path).map(parse_wid).toDF(['uid', 'sign', 'date', 'click', 'pv'])
+        wid_log = wid_log.filter(wid_log.sign=='360_79aabe15').select('uid', 'click', 'pv')#.dropDuplicates(['uid'])
+        try:
+            wid_all = wid_all.unionAll(wid_log)
+        except:
+            wid_all = wid_log
+
+    wid_all  = wid_all.withColumn('ifclick', F.signum('click') )
+    wid_info = wid_all.groupby('uid').agg(F.sum('click').alias('sum_click'), \
+                                          F.sum('pv').alias('sum_pv'), \
+                                          F.sum('ifclick').alias('active_level'))
+
+    last_date = today - datetime.timedelta(days=1)
+    last_date = last_date.strftime('%Y%m%d')
+    last_wid_path  = 'hdfs://namenodefd1v.qss.zzzc.qihoo.net:9000/home/nlp/personal/liweili/handlelog_{0}/wid-r-{1}*'.format(last_date,ifall)
+    last_wid = sc.textFile(last_wid_path).map(parse_wid).toDF(['uid', 'sign', 'date', 'last_click', 'last_pv'])\
+                                                        .filter("sign='360_79aabe15'").select('uid', 'last_click', 'last_pv')   
+    
+    
+    wid_join = wid_info.join(last_wid, 'uid', 'outer')
+    def f2str(x):
+        try:
+            return str(int(x))
+        except:
+            return x
+    wid_join = wid_join.withColumn('active_level', F.udf(f2str, T.StringType())(wid_join.active_level))
+    fillWid = {'uid':'null', 'sum_click':0, 'sum_pv':0,'active_level':'nohistory','last_click':0,'last_pv':0}
+    wid_join = wid_join.fillna(fillWid)
+
+    user_label = user_new_old_label.join(wid_join,'uid','outer')
+    fillDict = {'uid':'null', 'bucket':'null','NewOld':'null', 'sum_click':0, \
+                'sum_pv':0,'active_level':'nohandlelog','last_click':0,'last_pv':0}
+    user_label = user_label.fillna(fillDict)
+    user_label.show(n=100)
+    user_label_text = user_label.map( lambda x: '\t'.join( [x['uid'], x['bucket'], x['NewOld'],\
+                                      str(x['sum_click']), str(x['sum_pv']), str(x['active_level']), \
+                                      str(x['last_click']), str(x['last_pv'])] ))
+    
+    user_label_path =  save_path
+    os.system('hadoop fs -rmr {sdir}'.format( sdir = user_label_path ) )
+    user_label_text.saveAsTextFile( user_label_path, "org.apache.hadoop.io.compress.GzipCodec")
+
+if __name__ == "__main__":
+    usage = "usage: %prog [options] arg" 
+    parser = OptionParser(usage = usage)
+    parser.add_option("--dateid", dest='dateid')
+    parser.add_option("--hb_date", dest='hb_date')
+    parser.add_option("--wl_date", dest='wl_date')
+    #parser.add_option("--handle_date", dest='landle_date')
+    parser.add_option("--save_path", dest='save_path',  help='the path of save the pv click', metavar='FILEPATH')
+
+    (options, args) = parser.parse_args()
+
+    conf = SparkConf().setAppName("zhangruibin:new_old_pv_click") \
+                      .set("spark.driver.memory", "500g") \
+                      .set("spark.executor.memory", "7g") \
+                      .set("spark.driver.maxResultSize", 3000)\
+                      .set("spark.storage.memoryFraction", 0.4) \
+                      .set("spark.shuffle.memoryFraction", 0.5) \
+                      .set("spark.network.timeout", 1200) \
+                      .set("spark.executor.instances", 500) \
+                      .set("spark.executor.cores", 2) \
+                      .set("spark.default.parallelism", 400) \
+                      .set("spark.yarn.priority", "VERY_HIGH") \
+                      .set("spark.yarn.queue", "root.nlp")
+#                     .set("spark.sql.shuffle.partitions", 3000) \
+#                      .set("spark.shuffle.service.enabled", "true") \
+#                      .set("yarn.nodemanager.pmem-check-enabled", "false") \
+#                      .set("yarn.nodemanager.vmem-check-enabled", "false") \
+
+    sc = SparkContext(conf=conf)
+    sq = HiveContext(sc)
+
+    main(options.dateid, options.hb_date, options.wl_date, options.save_path)
+
+    sc.stop()
+
+#!/bin/bash
+
+base_dir='/home/hdp-reader/proj/hdp-reader-up/personal/zhangruibin/user_label/user_label_20180108'
+INPUT_PAT=${base_dir}
+HDFS_PAT=${base_dir}"_with_bucket"
+
+hadoop fs -rmr ${HDFS_PAT}
+echo $INPUT_PAT
+function get_user_bucket(){
+        /usr/bin/hadoop/software/hadoop/bin/hadoop jar /usr/bin/hadoop/software/hadoop-0.20.2.1U29/contrib/streaming/hadoop-streaming.jar \
+                -input $INPUT_PAT \
+                -output $HDFS_PAT \
+                -mapper "python26 get_user_bucket.py"\
+                -reducer "cat"\
+                -file "./get_user_bucket.py" \
+                -file "./libcrc64.so"\
+                -file "./libcrypto.so.10"\
+                -file "./libssl.so.10"\
+                -jobconf mapred.job.name=zhangruibin_get_user_bucket \
+                -jobconf mapred.map.tasks=1000 \
+                -jobconf mapred.job.priority=VERY_HIGH \
+                -jobconf mapred.reduce.tasks=0 \
+                -jobconf mapred.output.compress=true \
+                -jobconf mapred.output.compression.codec=org.apache.hadoop.io.compress.GzipCodec 
+
+        hadoop fs -test -e $HDFS_PAT/_SUCCESS
+        if [ $? -ne 0 ]; then
+                exit 255
+        fi
+}
+get_user_bucket
+
+                # -file "/home/reduce.py" \
+                #-file "/home/nlp/zhangruibin/clickQueue/libcrc64.so"\
+                #-file "/home/nlp/zhangruibin/clickQueue/libcrypto.so.10"\
+                #-file "/home/nlp/zhangruibin/clickQueue/libssl.so.10"\
+
+
+
+#!/usr/bin/python
+#-*- coding:utf-8 -*-
+
+import sys
+import os
+reload(sys)
+sys.setdefaultencoding('utf-8')
+
+import re
+import time
+import datetime
+import hashlib
+import commands
+import codecs
+from operator import itemgetter
+
+import ctypes
+ctypes.CDLL("./libcrypto.so.10",ctypes.RTLD_GLOBAL)
+ctypes.CDLL("./libssl.so.10",ctypes.RTLD_GLOBAL)
+ginstance = ctypes.cdll.LoadLibrary("./libcrc64.so")
+
+for line in sys.stdin:
+    line = line.split('\t')
+    uid = line[0].encode('utf-8')
+    buck = str(ginstance.get_crc64(uid, len(uid)))
+    line[1] = buck
+    line[-1] = line[-1].strip()
+    print '\t'.join( line )
+
+
+
+
